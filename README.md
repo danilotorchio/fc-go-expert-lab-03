@@ -11,6 +11,15 @@ Ao criar um leilão, `AuctionRepository.CreateAuction` (`internal/infra/database
 
 A mesma variável `AUCTION_INTERVAL` já é usada pela rotina de criação de lances para recusar lances em leilões expirados, então o fechamento e a validação dos lances usam o mesmo horário de término.
 
+## Plus: reagendamento dos leilões abertos ao iniciar
+
+Além do que o desafio pede: como o agendamento do fechamento vive em goroutines (em memória), um restart da aplicação faria os leilões abertos nunca serem fechados. Para evitar isso, ao iniciar a aplicação `AuctionRepository.ScheduleOpenAuctionsClosing` busca todos os leilões com status `Active` no MongoDB e dispara uma goroutine de fechamento para cada um:
+
+- leilões que **já expiraram** enquanto a aplicação estava fora do ar são fechados imediatamente;
+- leilões **ainda em andamento** são fechados no horário original (`timestamp de criação + AUCTION_INTERVAL`).
+
+Para ver funcionando, crie um leilão, reinicie a aplicação antes do fim do `AUCTION_INTERVAL` (`docker compose restart app`) e consulte o leilão após o tempo configurado: o status muda para `1` normalmente.
+
 ## Variáveis de ambiente
 
 Ficam em `cmd/auction/.env`:
@@ -70,13 +79,15 @@ curl localhost:8080/auction/<id>
 
 ## Testes
 
-O teste `TestCreateAuctionClosesAutomatically` (`internal/infra/database/auction/create_auction_test.go`) usa um MongoDB real e valida o cenário:
+Os testes em `internal/infra/database/auction/create_auction_test.go` usam um MongoDB real, com `AUCTION_INTERVAL=1s`:
 
-1. cria um leilão e verifica que o status é `Active`;
-2. aguarda o tempo configurado em `AUCTION_INTERVAL` (`1s` no teste);
-3. verifica que o status mudou para `Completed` sem nenhuma intervenção manual.
+- `TestCreateAuctionClosesAutomatically` — cenário do desafio:
+  1. cria um leilão e verifica que o status é `Active`;
+  2. aguarda o tempo configurado em `AUCTION_INTERVAL`;
+  3. verifica que o status mudou para `Completed` sem nenhuma intervenção manual.
+- `TestScheduleOpenAuctionsClosing` — plus: simula leilões abertos deixados por uma execução anterior (um já expirado e um em andamento), executa o reagendamento e verifica que o expirado é fechado imediatamente e o em andamento só após `AUCTION_INTERVAL`.
 
-Cada execução usa um banco temporário, removido ao final. Sem `MONGODB_URL` definida, o teste é ignorado.
+Cada teste usa um banco temporário, removido ao final. Sem `MONGODB_URL` definida, os testes são ignorados.
 
 Via Docker (com o MongoDB do compose):
 
