@@ -70,6 +70,27 @@ func (ar *AuctionRepository) closeAuctionWhenExpired(auctionId string, endTime t
 	}
 }
 
+func (ar *AuctionRepository) ScheduleOpenAuctionsClosing(ctx context.Context) *internal_error.InternalError {
+	cursor, err := ar.Collection.Find(ctx, bson.M{"status": auction_entity.Active})
+	if err != nil {
+		logger.Error("Error trying to find open auctions", err)
+		return internal_error.NewInternalServerError("Error trying to find open auctions")
+	}
+	defer cursor.Close(ctx)
+
+	var openAuctions []AuctionEntityMongo
+	if err := cursor.All(ctx, &openAuctions); err != nil {
+		logger.Error("Error trying to decode open auctions", err)
+		return internal_error.NewInternalServerError("Error trying to decode open auctions")
+	}
+
+	for _, openAuction := range openAuctions {
+		go ar.closeAuctionWhenExpired(openAuction.Id, time.Unix(openAuction.Timestamp, 0).Add(ar.auctionInterval))
+	}
+
+	return nil
+}
+
 func GetAuctionInterval() time.Duration {
 	duration, err := time.ParseDuration(os.Getenv("AUCTION_INTERVAL"))
 	if err != nil {
